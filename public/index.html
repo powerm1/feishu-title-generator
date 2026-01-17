@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>飞书产品标题生成器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        .log-container { max-height: 400px; overflow-y: auto; }
+        .log-container::-webkit-scrollbar { width: 6px; }
+        .log-container::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div x-data="app()" x-init="init()" class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Header -->
+        <header class="bg-white rounded-lg shadow-sm p-6 mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-800">飞书产品标题生成器</h1>
+                    <p class="text-gray-500 mt-1">使用云雾API (GPT-5.1) 生成优化的产品标题</p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <span x-show="loading" class="text-blue-500">
+                        <svg class="animate-spin h-5 w-5" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                    </span>
+                    <button @click="fetchBatches()" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition">
+                        刷新
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Status Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white rounded-lg shadow-sm p-4">
+                <div class="text-gray-500 text-sm">总批次</div>
+                <div class="text-2xl font-bold text-gray-800" x-text="totalBatches"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm p-4">
+                <div class="text-gray-500 text-sm">待处理</div>
+                <div class="text-2xl font-bold text-yellow-500" x-text="pendingBatches.length"></div>
+            </div>
+            <div class="bg-white rounded-lg shadow-sm p-4">
+                <div class="text-gray-500 text-sm">已完成</div>
+                <div class="text-2xl font-bold text-green-500" x-text="completedBatches.length"></div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Pending Batches -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4">待处理批次</h2>
+                <div x-show="pendingBatches.length === 0" class="text-gray-400 text-center py-8">
+                    暂无待处理批次
+                </div>
+                <div class="space-y-3">
+                    <template x-for="batch in pendingBatches" :key="batch.batch">
+                        <div class="border rounded-lg p-4 hover:border-blue-300 transition">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <span class="font-medium text-gray-800" x-text="batch.batch"></span>
+                                    <span x-show="batch.coze_run" class="ml-2 px-2 py-0.5 text-xs bg-yellow-100 text-yellow-700 rounded">
+                                        已触发
+                                    </span>
+                                </div>
+                                <button
+                                    @click="processBatch(batch)"
+                                    :disabled="processing"
+                                    class="px-3 py-1.5 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition">
+                                    处理
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Completed Batches -->
+            <div class="bg-white rounded-lg shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4">已完成批次</h2>
+                <div x-show="completedBatches.length === 0" class="text-gray-400 text-center py-8">
+                    暂无已完成批次
+                </div>
+                <div class="space-y-3 max-h-96 overflow-y-auto">
+                    <template x-for="batch in completedBatches" :key="batch.batch">
+                        <div class="border rounded-lg p-4 border-green-200 bg-green-50">
+                            <div class="flex items-center justify-between">
+                                <span class="font-medium text-gray-800" x-text="batch.batch"></span>
+                                <span class="text-xs text-green-600" x-text="batch.result"></span>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Processing Log -->
+        <div x-show="logs.length > 0" x-cloak class="bg-white rounded-lg shadow-sm p-6 mt-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-semibold text-gray-800">处理日志</h2>
+                <button @click="logs = []" class="text-sm text-gray-400 hover:text-gray-600">清空</button>
+            </div>
+            <div class="log-container bg-gray-900 rounded-lg p-4 font-mono text-sm">
+                <template x-for="(log, index) in logs" :key="index">
+                    <div class="py-1" :class="{
+                        'text-green-400': log.type === 'success',
+                        'text-red-400': log.type === 'error',
+                        'text-yellow-400': log.type === 'warning',
+                        'text-gray-300': log.type === 'info'
+                    }">
+                        <span class="text-gray-500" x-text="log.time"></span>
+                        <span x-text="log.message"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Webhook Config -->
+        <div class="bg-white rounded-lg shadow-sm p-6 mt-6">
+            <h2 class="text-lg font-semibold text-gray-800 mb-4">Webhook 配置</h2>
+            <div class="bg-gray-50 rounded-lg p-4">
+                <div class="mb-4">
+                    <label class="block text-sm text-gray-500 mb-1">Webhook URL</label>
+                    <div class="flex">
+                        <input type="text" readonly :value="webhookUrl"
+                            class="flex-1 px-3 py-2 bg-white border rounded-l-lg text-gray-700 font-mono text-sm">
+                        <button @click="copyWebhookUrl()"
+                            class="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-r-lg transition">
+                            复制
+                        </button>
+                    </div>
+                </div>
+                <div class="text-sm text-gray-500">
+                    <p class="mb-2">飞书多维表格自动化配置：</p>
+                    <ul class="list-disc list-inside space-y-1 text-gray-600">
+                        <li>触发条件：当 COZE RUN 字段被勾选时</li>
+                        <li>动作：发送 Webhook 请求 (POST)</li>
+                        <li>请求体：<code class="bg-gray-200 px-1 rounded">{"batch": "{{Batch#}}", "record_id": "{{record_id}}"}</code></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="text-center text-gray-400 text-sm mt-8">
+            飞书产品标题生成器 v1.0.0 | 使用云雾API (GPT-5.1)
+        </footer>
+    </div>
+
+    <script>
+        function app() {
+            return {
+                loading: false,
+                processing: false,
+                totalBatches: 0,
+                pendingBatches: [],
+                completedBatches: [],
+                logs: [],
+                webhookUrl: '',
+
+                init() {
+                    this.webhookUrl = window.location.origin + '/api/webhook';
+                    this.fetchBatches();
+                    // 每30秒自动刷新
+                    setInterval(() => this.fetchBatches(), 30000);
+                },
+
+                async fetchBatches() {
+                    this.loading = true;
+                    try {
+                        const res = await fetch('/api/batches');
+                        const data = await res.json();
+                        if (data.success) {
+                            this.pendingBatches = data.pending || [];
+                            this.completedBatches = data.completed || [];
+                            this.totalBatches = data.total || 0;
+                        } else {
+                            this.addLog('error', '获取批次失败: ' + (data.error || '未知错误'));
+                        }
+                    } catch (e) {
+                        this.addLog('error', '网络错误: ' + e.message);
+                    }
+                    this.loading = false;
+                },
+
+                async processBatch(batch) {
+                    if (this.processing) return;
+
+                    this.processing = true;
+                    this.addLog('info', `开始处理批次 ${batch.batch}...`);
+
+                    try {
+                        const res = await fetch('/api/process', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                batch: batch.batch,
+                                record_id: batch.record_id
+                            })
+                        });
+
+                        const data = await res.json();
+
+                        if (data.success) {
+                            this.addLog('success', `批次 ${batch.batch} 处理完成: ${data.written}/${data.total} 个产品`);
+
+                            // 显示详细日志
+                            if (data.logs) {
+                                data.logs.forEach(log => {
+                                    if (log.status === 'success') {
+                                        this.addLog('success', `  [${log.index}] ${log.asin} - ${log.title_length}字符`);
+                                    } else {
+                                        this.addLog('error', `  [${log.index}] ${log.asin} - ${log.error || '失败'}`);
+                                    }
+                                });
+                            }
+
+                            // 刷新批次列表
+                            await this.fetchBatches();
+                        } else {
+                            this.addLog('error', `处理失败: ${data.error || data.message}`);
+                        }
+                    } catch (e) {
+                        this.addLog('error', '处理出错: ' + e.message);
+                    }
+
+                    this.processing = false;
+                },
+
+                addLog(type, message) {
+                    const now = new Date();
+                    const time = now.toLocaleTimeString('zh-CN', { hour12: false });
+                    this.logs.unshift({ type, message, time });
+                    // 保留最近100条日志
+                    if (this.logs.length > 100) {
+                        this.logs = this.logs.slice(0, 100);
+                    }
+                },
+
+                copyWebhookUrl() {
+                    navigator.clipboard.writeText(this.webhookUrl).then(() => {
+                        this.addLog('info', 'Webhook URL 已复制到剪贴板');
+                    });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
