@@ -1,20 +1,16 @@
-"""
-健康检查端点
-"""
+from http.server import BaseHTTPRequestHandler
 import json
 
 
-def handler(request):
-    """Vercel Serverless Function handler"""
-    return {
-        "statusCode": 200,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
-        },
-        "body": json.dumps({
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        response = {
             "status": "ok",
             "message": "飞书产品标题生成器运行中",
             "version": "1.0.0"
-        })
-    }
+        }
+        self.wfile.write(json.dumps(response).encode('utf-8'))
