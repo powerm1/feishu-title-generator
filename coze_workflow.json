@@ -1,0 +1,136 @@
+{
+  "app": {
+    "name": "飞书产品标题生成器",
+    "description": "自动生成飞书产品标题"
+  },
+  "workflow": {
+    "nodes": [
+      {
+        "id": "start_node",
+        "type": "start",
+        "data": {
+          "title": "开始",
+          "variables": [
+            {"variable_type": "string", "name": "batch_num", "value": "{{触发批次号}}"},
+            {"variable_type": "string", "name": "record_id", "value": "{{触发记录ID}}"}
+          ]
+        }
+      },
+      {
+        "id": "http_1",
+        "type": "http-request",
+        "data": {
+          "title": "获取飞书Token",
+          "method": "POST",
+          "url": "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+          "authorization": {
+            "type": "no-auth"
+          },
+          "headers": [{"key": "Content-Type", "value": "application/json"}],
+          "body": {
+            "body_type": "json",
+            "json_body": "{\"app_id\": \"cli_a73bda7327399013\", \"app_secret\": \"IxStGQLRexU8XAKuu2uyAfmWQfHPVXlb\"}"
+          },
+          "outputs": [
+            {"variable_type": "string", "name": "token", "value_selector": "tenant_access_token"}
+          ]
+        }
+      },
+      {
+        "id": "http_2",
+        "type": "http-request",
+        "data": {
+          "title": "获取产品列表",
+          "method": "GET",
+          "url": "https://open.feishu.cn/open-apis/bitable/v1/apps/Xm6ubPCUZa2M7nsjalTczVW5nCf/tables/tblDgzsh7WQoCxZS/records?filter={{encodeURIComponent('{\"conditions\":[{\"field_name\":\"Batch #\",\"operator\":\"is\",\"value\":[\"' & start_node.batch_num & '\"]}')}}&page_size=100",
+          "authorization": {
+            "type": "bearer",
+            "token": "{{http_1.token}}"
+          },
+          "outputs": [
+            {"variable_type": "array", "name": "products", "value_selector": "data.items"}
+          ]
+        }
+      },
+      {
+        "id": "iterator",
+        "type": "iterator",
+        "data": {
+          "title": "遍历产品",
+          "input": "{{http_2.products}}",
+          "output_selector": "{{item}}"
+        }
+      },
+      {
+        "id": "code_1",
+        "type": "code",
+        "data": {
+          "title": "准备提示词",
+          "code": "def main(input):\n    product = input['item']['fields']\n    asin = product.get('ASIN', {}).get('text', '')\n    title = product.get('商品标题', '')\n    bullets = product.get('产品卖点', '')\n    name_format = product.get('name format', '')\n    \n    prompt = f'''你是一个专业的电商产品标题优化专家。请根据以下信息生成一个优化的英文产品标题。\n\n## 输入信息：\n- 原标题: {title}\n- 五点描述: {bullets}\n- Name Format: {name_format}\n\n## 标题生成规则（必须严格遵守）：\n1. 使用 name format 的结构构建标题\n2. 标题总字符数（含空格）必须在 100-110 个字符之间（这是硬性要求！）\n3. 保留产品核心本质，突出独特卖点和优势\n4. 不包含任何品牌名\n5. 保持英文，不翻译成中文\n6. 如果是单品，不添加 \"1pack\"\n7. 绝对不能使用以下词汇：battery, batteries, rechargeable\n\n## 输出要求：\n只输出优化后的标题，不要包含任何解释、引号或其他内容。\n确保字符数严格在 100-110 之间。'''\n    \n    return {'asin': asin, 'prompt': prompt, 'index': input['index']}",
+          "outputs": [
+            {"variable_type": "string", "name": "asin"},
+            {"variable_type": "string", "name": "prompt"},
+            {"variable_type": "number", "name": "index"}
+          ]
+        }
+      },
+      {
+        "id": "llm",
+        "type": "llm",
+        "data": {
+          "title": "调用云雾API生成标题",
+          "model_provider": "openai-compatible",
+          "model_name": "gpt-5.1-2025-11-13",
+          "api_key": "sk-2hX6ze27mkjOWtpCbKeo9U056wR6qmN8DttWMRCvYyNluQ4C",
+          "api_base": "https://yunwu.ai/v1",
+          "prompt": [
+            {"role": "user", "content": "{{code_1.prompt}}"}
+          ],
+          "temperature": 0.7,
+          "max_tokens": 200,
+          "outputs": [
+            {"variable_type": "string", "name": "generated_title", "value_selector": "choices.0.message.content"}
+          ]
+        }
+      },
+      {
+        "id": "http_3",
+        "type": "http-request",
+        "data": {
+          "title": "写入表2",
+          "method": "POST",
+          "url": "https://open.feishu.cn/open-apis/bitable/v1/apps/Xm6ubPCUZa2M7nsjalTczVW5nCf/tables/tblECTD6VFMI2ofL/records/batch_create",
+          "authorization": {
+            "type": "bearer",
+            "token": "{{http_1.token}}"
+          },
+          "headers": [{"key": "Content-Type", "value": "application/json"}],
+          "body": {
+            "body_type": "json",
+            "json_body": "{\"records\":[{\"fields\":{\"ASIN\":\"" & code_1.asin & "\",\"Product_Name\":\"" & llm.generated_title & "\"}}]}"
+          }
+        }
+      },
+      {
+        "id": "end_node",
+        "type": "end",
+        "data": {
+          "title": "结束",
+          "outputs": [
+            {"variable_type": "string", "name": "result", "value": "处理完成"}
+          ]
+        }
+      }
+    ],
+    "edges": [
+      {"id": "start-http_1", "source": "start_node", "target": "http_1"},
+      {"id": "http_1-http_2", "source": "http_1", "target": "http_2"},
+      {"id": "http_2-iterator", "source": "http_2", "target": "iterator"},
+      {"id": "iterator-code_1", "source": "iterator", "target": "code_1"},
+      {"id": "code_1-llm", "source": "code_1", "target": "llm"},
+      {"id": "llm-http_3", "source": "llm", "target": "http_3"},
+      {"id": "http_3-iterator", "source": "http_3", "target": "iterator"},
+      {"id": "iterator-end", "source": "iterator", "target": "end_node"}
+    ]
+  }
+}
